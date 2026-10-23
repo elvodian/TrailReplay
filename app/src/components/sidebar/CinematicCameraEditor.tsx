@@ -1,4 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  cloneElement,
+  type Dispatch,
+  type PropsWithChildren,
+  type ReactElement,
+  type SetStateAction,
+  useEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react';
 import { useAppStore } from '@/store/useAppStore';
 import type { AppState } from '@/store/storeTypes';
 import { useComputedJourney } from '@/hooks/useComputedJourney';
@@ -10,17 +20,32 @@ import { formatDuration } from '@/utils/units';
 import { trackEvent } from '@/utils/analytics';
 import { getPlaybackCameraPose, getRouteBearingAtProgress } from '@/utils/replayCameraPlan';
 import {
+  CINEMATIC_BEARING_MAX,
+  CINEMATIC_BEARING_MIN,
+  CINEMATIC_PITCH_MAX,
+  CINEMATIC_PITCH_MIN,
   CINEMATIC_ZOOM_MAX,
   CINEMATIC_ZOOM_MIN,
-  deriveCinematicKeyframeProgress,
-  getCinematicCameraPose,
   type CinematicKeyframeEasing,
   type CinematicKeyframeFrame,
+  deriveCinematicKeyframeProgress,
+  getCinematicCameraPose,
 } from '@/utils/cinematicCameraPlan';
 import { isFocusedViaPointer } from '@/utils/focusModality';
 import { isTypingTarget, shouldHandleEnterAsPrimaryAction } from '@/utils/keyboardShortcuts';
 import { CinematicOrbitBall } from './CinematicOrbitBall';
-import { Camera, ChevronDown, ChevronUp, Minus, Plus, Trash2 } from 'lucide-react';
+import {
+  ArrowDownSquare,
+  ArrowUpSquare,
+  Camera,
+  ChevronDown,
+  ChevronUp,
+  Minus,
+  Plus,
+  RotateCcw,
+  RotateCw,
+  Trash2
+} from 'lucide-react';
 
 const FRAME_OPTIONS: CinematicKeyframeFrame[] = ['world', 'route'];
 const EASING_OPTIONS: CinematicKeyframeEasing[] = ['smooth', 'linear', 'hold'];
@@ -57,6 +82,95 @@ function shortestAngleDelta(fromDeg: number, toDeg: number): number {
   return (((toDeg - fromDeg) % 360) + 540) % 360 - 180;
 }
 
+type DraftPose = { bearingDeg: number, pitchDeg: number, zoom: number };
+type ElementWithClassName = ReactElement<{ className?: string }>;
+
+function CinematicParameter(props: {
+  draftPoseProperty: keyof DraftPose,
+  min: number,
+  max: number,
+  step: number,
+  draftPoseState: [DraftPose, Dispatch<SetStateAction<DraftPose>>],
+  translationKey: string,
+  iconDecrease: ElementWithClassName,
+  iconIncrease: ElementWithClassName,
+}) {
+  const { t } = useI18n();
+
+  const [draftPose, setDraftPose] = props.draftPoseState;
+
+  const styleIcon = (icon: ElementWithClassName) => cloneElement(icon, {
+    className: [icon.props.className, "w-3.5", "h-3.5"].filter(Boolean).join(" "),
+  });
+
+  return <div>
+    <div className="flex items-baseline justify-between mb-1">
+      <p
+        className="text-xs text-[var(--evergreen-60)]">{t(`settings.cinematicCamera.${props.translationKey}.value`)}</p>
+      <output className="text-[10px] tabular-nums text-[var(--evergreen-60)]">
+        {draftPose[props.draftPoseProperty].toFixed(1)}
+      </output>
+    </div>
+    <div className="flex items-center gap-2">
+      <button
+        type="button"
+        onClick={() => setDraftPose((current: DraftPose): DraftPose => ({
+          ...current,
+          [props.draftPoseProperty]: Math.max(props.min, current[props.draftPoseProperty] - props.step)
+        }))}
+        aria-label={t(`settings.cinematicCamera.${props.translationKey}.decrease`)}
+        className="p-1.5 rounded border border-[var(--evergreen)]/30 text-[var(--evergreen)] hover:border-[var(--trail-orange)] hover:text-[var(--trail-orange)]"
+      >
+        {styleIcon(props.iconDecrease)}
+      </button>
+      <input
+        type="range"
+        min={props.min}
+        max={props.max}
+        step={1}
+        value={draftPose[props.draftPoseProperty]}
+        onChange={(e) => setDraftPose((current) => ({ ...current, [props.draftPoseProperty]: Number(e.target.value) }))}
+        className="flex-1 accent-[var(--trail-orange)]"
+      />
+      <button
+        type="button"
+        onClick={() => setDraftPose((current) => ({
+          ...current,
+          [props.draftPoseProperty]: Math.min(props.max, current[props.draftPoseProperty] + props.step)
+        }))}
+        aria-label={t(`settings.cinematicCamera.${props.translationKey}.increase`)}
+        className="p-1.5 rounded border border-[var(--evergreen)]/30 text-[var(--evergreen)] hover:border-[var(--trail-orange)] hover:text-[var(--trail-orange)]"
+      >
+        {styleIcon(props.iconIncrease)}
+      </button>
+    </div>
+  </div>;
+}
+
+function Foldable(
+  props: PropsWithChildren<{
+    statusState: [boolean, Dispatch<SetStateAction<boolean>>],
+    translationKey: string,
+  }>
+) {
+  const { t } = useI18n();
+
+  const [status, setStatus] = props.statusState;
+
+  return <>
+    <button
+      type="button"
+      onClick={() => setStatus((value) => !value)}
+      className="w-full flex items-center justify-between text-xs font-medium text-[var(--evergreen)] hover:text-[var(--trail-orange)]"
+      aria-expanded={status}
+    >
+      {t(`settings.cinematicCamera.${props.translationKey}`)}
+      {status ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+    </button>
+    {status && props.children}
+  </>;
+}
+
 /**
  * Cinematic-mode authoring. The primary control is the orbit ball
  * (CINEMATIC_CAMERA_PLAN.md section 8.2): it only ever changes bearing and
@@ -80,8 +194,10 @@ export function CinematicCameraEditor() {
   const { computedJourney, currentPosition, currentSegment, cameraPathCoordinates, elevationData } = useComputedJourney();
   const preparedKeyframes = usePreparedCinematicCameraKeyframes(cameraPathCoordinates);
 
-  const [draftPose, setDraftPose] = useState({ bearingDeg: 180, pitchDeg: 55, zoom: 14 });
+  const draftPoseState = useState({ bearingDeg: 180, pitchDeg: 55, zoom: 14 });
+  const [draftPose, setDraftPose] = draftPoseState;
   const [showInfo, setShowInfo] = useState(false);
+  const showSlidersState = useState(false);
 
   const routeHeadingDeg = cameraPathCoordinates.length > 0
     ? getRouteBearingAtProgress(cameraPathCoordinates, playback.progress)
@@ -202,7 +318,7 @@ export function CinematicCameraEditor() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  }, [setDraftPose]);
 
   const canCapture = !!computedJourney && !!currentPosition && !!currentSegment;
 
@@ -332,41 +448,39 @@ export function CinematicCameraEditor() {
         />
       </div>
 
-      <div>
-        <div className="flex items-baseline justify-between mb-1">
-          <p className="text-xs text-[var(--evergreen-60)]">{t('settings.cinematicCamera.zoom')}</p>
-          <output className="text-[10px] tabular-nums text-[var(--evergreen-60)]">
-            {draftPose.zoom.toFixed(1)}
-          </output>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setDraftPose((current) => ({ ...current, zoom: Math.max(CINEMATIC_ZOOM_MIN, current.zoom - ZOOM_STEP) }))}
-            aria-label={t('settings.cinematicCamera.zoomOut')}
-            className="p-1.5 rounded border border-[var(--evergreen)]/30 text-[var(--evergreen)] hover:border-[var(--trail-orange)] hover:text-[var(--trail-orange)]"
-          >
-            <Minus className="w-3.5 h-3.5" />
-          </button>
-          <input
-            type="range"
-            min={CINEMATIC_ZOOM_MIN}
-            max={CINEMATIC_ZOOM_MAX}
-            step={0.1}
-            value={draftPose.zoom}
-            onChange={(e) => setDraftPose((current) => ({ ...current, zoom: Number(e.target.value) }))}
-            className="flex-1 accent-[var(--trail-orange)]"
-          />
-          <button
-            type="button"
-            onClick={() => setDraftPose((current) => ({ ...current, zoom: Math.min(CINEMATIC_ZOOM_MAX, current.zoom + ZOOM_STEP) }))}
-            aria-label={t('settings.cinematicCamera.zoomIn')}
-            className="p-1.5 rounded border border-[var(--evergreen)]/30 text-[var(--evergreen)] hover:border-[var(--trail-orange)] hover:text-[var(--trail-orange)]"
-          >
-            <Plus className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      </div>
+      <Foldable statusState={showSlidersState}
+                translationKey={'slidersTitle'}
+      >
+        <CinematicParameter draftPoseProperty={'bearingDeg'}
+                            min={CINEMATIC_BEARING_MIN}
+                            max={CINEMATIC_BEARING_MAX}
+                            step={1}
+                            draftPoseState={draftPoseState}
+                            translationKey={'bearing'}
+                            iconDecrease={<RotateCcw />}
+                            iconIncrease={<RotateCw />}
+        />
+
+        <CinematicParameter draftPoseProperty={'pitchDeg'}
+                            min={CINEMATIC_PITCH_MIN}
+                            max={CINEMATIC_PITCH_MAX}
+                            step={1}
+                            draftPoseState={draftPoseState}
+                            translationKey={'pitch'}
+                            iconDecrease={<ArrowDownSquare />}
+                            iconIncrease={<ArrowUpSquare />}
+        />
+      </Foldable>
+
+      <CinematicParameter draftPoseProperty={'zoom'}
+                          min={CINEMATIC_ZOOM_MIN}
+                          max={CINEMATIC_ZOOM_MAX}
+                          step={0.1}
+                          draftPoseState={draftPoseState}
+                          translationKey={'zoom'}
+                          iconDecrease={<Minus />}
+                          iconIncrease={<Plus />}
+      />
 
       <button
         type="button"
@@ -383,7 +497,8 @@ export function CinematicCameraEditor() {
       ) : (
         <div className="space-y-2">
           {rows.map(({ keyframe, progress }) => (
-            <div key={keyframe.id} className="p-2 rounded-lg border border-[var(--evergreen)]/20 bg-[var(--canvas)] space-y-2">
+            <div key={keyframe.id}
+                 className="p-2 rounded-lg border border-[var(--evergreen)]/20 bg-[var(--canvas)] space-y-2">
               <div className="flex items-center justify-between">
                 <button
                   type="button"
