@@ -191,12 +191,18 @@ export function CinematicCameraEditor() {
   const updateCinematicCameraKeyframe = useAppStore((state) => state.updateCinematicCameraKeyframe);
   const removeCinematicCameraKeyframe = useAppStore((state) => state.removeCinematicCameraKeyframe);
   const seekToProgress = useAppStore((state) => state.seekToProgress);
-  const { computedJourney, currentPosition, currentSegment, cameraPathCoordinates, elevationData } = useComputedJourney();
+  const {
+    computedJourney,
+    currentPosition,
+    currentSegment,
+    cameraPathCoordinates,
+    elevationData
+  } = useComputedJourney();
   const preparedKeyframes = usePreparedCinematicCameraKeyframes(cameraPathCoordinates);
 
   const draftPoseState = useState({ bearingDeg: 180, pitchDeg: 55, zoom: 14 });
   const [draftPose, setDraftPose] = draftPoseState;
-  const [showInfo, setShowInfo] = useState(false);
+  const showInfoState = useState(false);
   const showSlidersState = useState(false);
 
   const routeHeadingDeg = cameraPathCoordinates.length > 0
@@ -293,10 +299,16 @@ export function CinematicCameraEditor() {
 
       switch (event.key.toLowerCase()) {
         case 'a':
-          setDraftPose((current) => ({ ...current, bearingDeg: normalizeAngle(current.bearingDeg - BEARING_KEY_STEP) }));
+          setDraftPose((current) => ({
+            ...current,
+            bearingDeg: normalizeAngle(current.bearingDeg - BEARING_KEY_STEP)
+          }));
           break;
         case 'd':
-          setDraftPose((current) => ({ ...current, bearingDeg: normalizeAngle(current.bearingDeg + BEARING_KEY_STEP) }));
+          setDraftPose((current) => ({
+            ...current,
+            bearingDeg: normalizeAngle(current.bearingDeg + BEARING_KEY_STEP)
+          }));
           break;
         case 'w':
           setDraftPose((current) => ({ ...current, pitchDeg: Math.max(0, current.pitchDeg - PITCH_KEY_STEP) }));
@@ -327,14 +339,14 @@ export function CinematicCameraEditor() {
 
     const existingId = computedJourney
       ? keyframes.find((entry) => {
-          const progress = deriveCinematicKeyframeProgress(
-            entry.anchor,
-            computedJourney.segmentTimings,
-            computedJourney.coordinates,
-            playback.routeTimingMode,
-          );
-          return progress !== null && Math.abs(progress - playback.progress) <= RECAPTURE_PROGRESS_TOLERANCE;
-        })?.id
+        const progress = deriveCinematicKeyframeProgress(
+          entry.anchor,
+          computedJourney.segmentTimings,
+          computedJourney.coordinates,
+          playback.routeTimingMode,
+        );
+        return progress !== null && Math.abs(progress - playback.progress) <= RECAPTURE_PROGRESS_TOLERANCE;
+      })?.id
       : undefined;
 
     if (existingId) {
@@ -385,17 +397,17 @@ export function CinematicCameraEditor() {
   // Route anchors change with the journey/keyframes, not the playback clock.
   const rows = useMemo(() => computedJourney
     ? keyframes
-        .map((keyframe) => {
-          const progress = deriveCinematicKeyframeProgress(
-            keyframe.anchor,
-            computedJourney.segmentTimings,
-            computedJourney.coordinates,
-            playback.routeTimingMode,
-          );
-          return progress === null ? null : { keyframe, progress };
-        })
-        .filter((entry): entry is { keyframe: (typeof keyframes)[number]; progress: number } => entry !== null)
-        .sort((a, b) => a.progress - b.progress)
+      .map((keyframe) => {
+        const progress = deriveCinematicKeyframeProgress(
+          keyframe.anchor,
+          computedJourney.segmentTimings,
+          computedJourney.coordinates,
+          playback.routeTimingMode,
+        );
+        return progress === null ? null : { keyframe, progress };
+      })
+      .filter((entry): entry is { keyframe: (typeof keyframes)[number]; progress: number } => entry !== null)
+      .sort((a, b) => a.progress - b.progress)
     : [], [computedJourney, keyframes, playback.routeTimingMode]);
 
   const changeFrame = (keyframeId: string, progress: number, nextFrame: CinematicKeyframeFrame) => {
@@ -419,16 +431,7 @@ export function CinematicCameraEditor() {
     <div className="mt-3 p-3 bg-[var(--evergreen)]/5 rounded-lg space-y-3">
       <p className="text-xs text-[var(--evergreen-60)]">{t('settings.cinematicCamera.hint')}</p>
 
-      <button
-        type="button"
-        onClick={() => setShowInfo((value) => !value)}
-        className="w-full flex items-center justify-between text-xs font-medium text-[var(--evergreen)] hover:text-[var(--trail-orange)]"
-        aria-expanded={showInfo}
-      >
-        {t('settings.cinematicCamera.infoTitle')}
-        {showInfo ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-      </button>
-      {showInfo && (
+      <Foldable statusState={showInfoState} translationKey={'infoTitle'}>
         <ul className="text-[11px] text-[var(--evergreen-60)] leading-relaxed space-y-1.5 list-disc pl-4">
           <li>{t('settings.cinematicCamera.infoKeyboard')}</li>
           <li>{t('settings.cinematicCamera.infoBall')}</li>
@@ -437,7 +440,7 @@ export function CinematicCameraEditor() {
           <li>{t('settings.cinematicCamera.infoEasing')}</li>
           <li>{t('settings.cinematicCamera.infoStability')}</li>
         </ul>
-      )}
+      </Foldable>
 
       <div className="flex justify-center">
         <CinematicOrbitBall
